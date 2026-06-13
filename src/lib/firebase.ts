@@ -130,29 +130,35 @@ export async function loadAllEvents(): Promise<{ events: Event[]; isCloudConnect
     
     const snapshot = (await Promise.race([getDocs(eventsCol), timeoutPromise])) as any;
     const cloudEvents: Event[] = [];
+    const cloudIds = new Set<string>();
     
     snapshot.forEach((docSnap: any) => {
-      cloudEvents.push(docSnap.data() as Event);
+      const data = docSnap.data() as Event;
+      cloudEvents.push(data);
+      cloudIds.add(data.id);
     });
 
-    // Sync cloud data back to local storage for offline support
-    if (cloudEvents.length > 0) {
-      saveLocalEvents(cloudEvents);
-      // Sort by creation or date descending
-      cloudEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      return { events: cloudEvents, isCloudConnected: true };
-    }
-    
-    // If cloud is empty but local has data, push local data to cloud
+    let deletedIds: string[] = [];
+    try {
+      const d = localStorage.getItem("deleted_event_ids");
+      if (d) deletedIds = JSON.parse(d);
+    } catch (e) {}
+    const deletedSet = new Set(deletedIds);
+
     const local = getLocalEvents();
-    if (local.length > 0) {
-      for (const ev of local) {
-        await saveEventToCloudOnly(ev);
+    const mergedEvents = [...cloudEvents];
+
+    // If local has events not present in cloud and not explicitly deleted, auto-upload to Firestore
+    for (const localEv of local) {
+      if (!cloudIds.has(localEv.id) && !deletedSet.has(localEv.id)) {
+        await saveEventToCloudOnly(localEv);
+        mergedEvents.push(localEv);
       }
     }
-    
-    local.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return { events: local, isCloudConnected: true };
+
+    mergedEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    saveLocalEvents(mergedEvents);
+    return { events: mergedEvents, isCloudConnected: true };
   } catch (error) {
     console.warn("Failed to load events from Firestore, using local backup:", error);
     // Silent fallback to local storage
@@ -173,6 +179,18 @@ async function saveEventToCloudOnly(event: Event) {
 }
 
 export async function saveEvent(event: Event): Promise<boolean> {
+  // Always remove from local deleted_event_ids tracker if re-saved
+  try {
+    const d = localStorage.getItem("deleted_event_ids");
+    if (d) {
+      let deletedIds: string[] = JSON.parse(d);
+      if (deletedIds.includes(event.id)) {
+        deletedIds = deletedIds.filter(id => id !== event.id);
+        localStorage.setItem("deleted_event_ids", JSON.stringify(deletedIds));
+      }
+    }
+  } catch (e) {}
+
   // Always save locally first to guarantee zero data loss
   const local = getLocalEvents();
   const index = local.findIndex((ev) => ev.id === event.id);
@@ -210,6 +228,16 @@ async function deleteEventFromCloudOnly(id: string) {
 }
 
 export async function deleteEvent(id: string): Promise<boolean> {
+  // Add to local deleted_event_ids tracker to prevent re-syncing from local list
+  try {
+    const d = localStorage.getItem("deleted_event_ids");
+    const deletedIds: string[] = d ? JSON.parse(d) : [];
+    if (!deletedIds.includes(id)) {
+      deletedIds.push(id);
+      localStorage.setItem("deleted_event_ids", JSON.stringify(deletedIds));
+    }
+  } catch (e) {}
+
   // Delete locally
   const local = getLocalEvents();
   const filtered = local.filter((ev) => ev.id !== id);
@@ -313,12 +341,42 @@ export function subscribeToEvents(callback: (events: Event[]) => void): () => vo
   const eventsCol = collection(db, 'events');
   return onSnapshot(eventsCol, (snapshot) => {
     const cloudEvents: Event[] = [];
+    const cloudIds = new Set<string>();
+    
     snapshot.forEach((docSnap) => {
-      cloudEvents.push(docSnap.data() as Event);
+      const data = docSnap.data() as Event;
+      cloudEvents.push(data);
+      cloudIds.add(data.id);
     });
-    cloudEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    saveLocalEvents(cloudEvents);
-    callback(cloudEvents);
+
+    let deletedIds: string[] = [];
+    try {
+      const d = localStorage.getItem("deleted_event_ids");
+      if (d) deletedIds = JSON.parse(d);
+    } catch (e) {}
+    const deletedSet = new Set(deletedIds);
+
+    const local = getLocalEvents();
+    const mergedEvents = [...cloudEvents];
+
+    // Reconciliation: If there are local events not present in the cloud and not deleted,
+    // upload them to the cloud in the background.
+    for (const localEv of local) {
+      if (!cloudIds.has(localEv.id)) {
+        if (deletedSet.has(localEv.id)) {
+          continue;
+        }
+        // Save to Firestore in background
+        saveEventToCloudOnly(localEv).catch((err) => {
+          console.warn("Failed to auto-reconcile local event to cloud:", localEv.id, err);
+        });
+        mergedEvents.push(localEv);
+      }
+    }
+
+    mergedEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    saveLocalEvents(mergedEvents);
+    callback(mergedEvents);
   }, (error) => {
     console.warn("Firestore events sub error:", error);
   });
@@ -330,11 +388,26 @@ export function subscribeToDefaultRoster(callback: (roster: RosterStudent[]) => 
   }
   const docRef = doc(db, 'rosters', 'default');
   return onSnapshot(docRef, (docSnap) => {
+    const localSaved = localStorage.getItem("default_student_roster");
+    const localRoster: RosterStudent[] = localSaved ? JSON.parse(localSaved) : [];
+
     if (docSnap.exists()) {
       const data = docSnap.data();
       if (data && Array.isArray(data.students)) {
         localStorage.setItem("default_student_roster", JSON.stringify(data.students));
         callback(data.students);
+      }
+    } else {
+      // If the cloud document doesn't exist yet, push the current local roster up to keep it online
+      if (localRoster.length > 0) {
+        setDoc(docRef, {
+          id: "default",
+          students: localRoster,
+          updatedAt: new Date().toISOString()
+        }).catch((err) => {
+          console.warn("Failed to auto-upload default roster:", err);
+        });
+        callback(localRoster);
       }
     }
   }, (error) => {

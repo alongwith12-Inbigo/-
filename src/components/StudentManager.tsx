@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Plus, Trash2, Upload, Users, AlertCircle, Check, X, Pencil, CloudLightning } from "lucide-react";
 import { Student } from "../types";
-import { loadDefaultRoster as apiLoadDefaultRoster, saveDefaultRoster as apiSaveDefaultRoster } from "../lib/firebase";
 
 interface StudentManagerProps {
   onAddStudents: (students: Student[]) => void;
@@ -9,6 +8,8 @@ interface StudentManagerProps {
   onRemoveStudent?: (id: string) => void;
   onClearRoster?: () => void;
   onUpdateStudent?: (id: string, name: string, number?: string) => void;
+  defaultSavedRoster?: Student[];
+  onSaveDefaultRoster?: (students: Student[]) => Promise<void>;
 }
 
 export default function StudentManager({
@@ -16,13 +17,14 @@ export default function StudentManager({
   currentRoster,
   onRemoveStudent,
   onClearRoster,
-  onUpdateStudent
+  onUpdateStudent,
+  defaultSavedRoster = [],
+  onSaveDefaultRoster
 }: StudentManagerProps) {
   const [bulkInput, setBulkInput] = useState("");
   const [singleName, setSingleName] = useState("");
   const [singleNumber, setSingleNumber] = useState("");
   const [activeTab, setActiveTab] = useState<"bulk" | "single">("bulk");
-  const [defaultSavedRoster, setDefaultSavedRoster] = useState<Student[]>([]);
   const [showSavedFeedback, setShowSavedFeedback] = useState(false);
 
   // States for inline student editing (Name & Number in the active/default state roster)
@@ -43,19 +45,6 @@ export default function StudentManager({
     }
     setEditingId(null);
   };
-
-  // Load saved default roster on mount
-  useEffect(() => {
-    const fetchDefaultRoster = async () => {
-      try {
-        const { roster } = await apiLoadDefaultRoster();
-        setDefaultSavedRoster(roster);
-      } catch (e) {
-        console.error("Failed to load default roster from firebase", e);
-      }
-    };
-    fetchDefaultRoster();
-  }, []);
 
   const handleSingleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,8 +101,9 @@ export default function StudentManager({
   const saveAsDefault = async () => {
     if (currentRoster.length === 0) return;
     try {
-      await apiSaveDefaultRoster(currentRoster);
-      setDefaultSavedRoster(currentRoster);
+      if (onSaveDefaultRoster) {
+        await onSaveDefaultRoster(currentRoster);
+      }
       setShowSavedFeedback(true);
       setTimeout(() => setShowSavedFeedback(false), 2500);
     } catch (e) {

@@ -6,7 +6,8 @@ import {
   testConnection,
   loadDefaultRoster,
   subscribeToEvents,
-  subscribeToDefaultRoster
+  subscribeToDefaultRoster,
+  saveDefaultRoster as apiSaveDefaultRoster
 } from "./lib/firebase";
 import { Event, Student, AttendanceRecord, AttendanceStatus } from "./types";
 import EventSelector from "./components/EventSelector";
@@ -37,6 +38,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<"all" | AttendanceStatus>("all");
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [sortBy, setSortBy] = useState<"number" | "name">("number");
+  const [defaultRoster, setDefaultRoster] = useState<Student[]>([]);
 
   // Load events on mount
   const handleLoadData = async () => {
@@ -61,7 +63,8 @@ export default function App() {
       // 1. Fetch initial default roster so creating new events works correctly even on clean loads
       try {
         const { roster, isCloudConnected: rosterConnected } = await loadDefaultRoster();
-        if (active && roster && roster.length > 0) {
+        if (active && roster) {
+          setDefaultRoster(roster);
           localStorage.setItem("default_student_roster", JSON.stringify(roster));
         }
         if (active) {
@@ -114,6 +117,7 @@ export default function App() {
     // 4. Real-time automatic listener subscription to Default Student Roster
     const unsubscribeRoster = subscribeToDefaultRoster((cloudRoster) => {
       if (!active) return;
+      setDefaultRoster(cloudRoster);
       localStorage.setItem("default_student_roster", JSON.stringify(cloudRoster));
     });
 
@@ -147,21 +151,15 @@ export default function App() {
   const handleCreateEvent = async (title: string, date: string) => {
     // Check if default roster exists, initialize students with it!
     let initialStudents: AttendanceRecord[] = [];
-    const saved = localStorage.getItem("default_student_roster");
-    if (saved) {
-      try {
-        const defaultRoster: Student[] = JSON.parse(saved);
-        initialStudents = defaultRoster.map((st) => ({
-          studentId: st.id,
-          name: st.name,
-          number: st.number,
-          status: AttendanceStatus.PRESENT, // Default all present initially
-          memo: "",
-          updatedAt: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.error("Failed to parse default student roster for new event", e);
-      }
+    if (defaultRoster.length > 0) {
+      initialStudents = defaultRoster.map((st) => ({
+        studentId: st.id,
+        name: st.name,
+        number: st.number,
+        status: AttendanceStatus.PRESENT, // Default all present initially
+        memo: "",
+        updatedAt: new Date().toISOString()
+      }));
     }
 
     const newEvent: Event = {
@@ -552,6 +550,11 @@ export default function App() {
                   onRemoveStudent={handleRemoveStudent}
                   onClearRoster={handleClearRoster}
                   onUpdateStudent={handleUpdateStudent}
+                  defaultSavedRoster={defaultRoster}
+                  onSaveDefaultRoster={async (roster) => {
+                    await apiSaveDefaultRoster(roster);
+                    setDefaultRoster(roster);
+                  }}
                 />
               )}
             </div>
