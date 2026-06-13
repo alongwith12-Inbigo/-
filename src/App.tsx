@@ -3,14 +3,16 @@ import {
   loadAllEvents,
   saveEvent as firebaseSaveEvent,
   deleteEvent as firebaseDeleteEvent,
-  testConnection
+  testConnection,
+  loadDefaultRoster,
+  subscribeToEvents,
+  subscribeToDefaultRoster
 } from "./lib/firebase";
 import { Event, Student, AttendanceRecord, AttendanceStatus } from "./types";
 import EventSelector from "./components/EventSelector";
 import StudentManager from "./components/StudentManager";
 import StatsDashboard from "./components/StatsDashboard";
 import StudentCard from "./components/StudentCard";
-import BackupManager from "./components/BackupManager";
 import { 
   ClipboardList, 
   HelpCircle, 
@@ -38,7 +40,7 @@ export default function App() {
 
   // Load events on mount
   const handleLoadData = async () => {
-    setIsLoading(true);
+    // Left as a manual/fallback utility or state reset trigger
     try {
       const { events: loadedEvents, isCloudConnected: connected } = await loadAllEvents();
       setEvents(loadedEvents);
@@ -48,13 +50,78 @@ export default function App() {
       }
     } catch (e) {
       console.error("Error loading events init:", e);
-    } finally {
-      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    handleLoadData();
+    let active = true;
+
+    const setupSync = async () => {
+      setIsLoading(true);
+      // 1. Fetch initial default roster so creating new events works correctly even on clean loads
+      try {
+        const { roster, isCloudConnected: rosterConnected } = await loadDefaultRoster();
+        if (active && roster && roster.length > 0) {
+          localStorage.setItem("default_student_roster", JSON.stringify(roster));
+        }
+        if (active) {
+          setIsCloudConnected(rosterConnected);
+        }
+      } catch (err) {
+        console.warn("Initial roster fetch skipped/failed:", err);
+      }
+
+      // 2. Fetch initial events list
+      try {
+        const { events: initialEvents, isCloudConnected: eventsConnected } = await loadAllEvents();
+        if (active) {
+          setEvents(initialEvents);
+          setIsCloudConnected(eventsConnected);
+          if (initialEvents.length > 0 && !selectedEventId) {
+            setSelectedEventId(initialEvents[0].id);
+          }
+        }
+      } catch (err) {
+        console.warn("Initial events fetch skipped/failed:", err);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    setupSync();
+
+    // 3. Real-time automatic listener subscription to Events
+    const unsubscribeEvents = subscribeToEvents((cloudEvents) => {
+      if (!active) return;
+      setEvents(cloudEvents);
+      setIsCloudConnected(true);
+      setIsLoading(false);
+
+      // Smart tracking of active selected ID
+      if (cloudEvents.length > 0) {
+        setSelectedEventId((prev) => {
+          if (!prev) return cloudEvents[0].id;
+          const stillExists = cloudEvents.some((ev) => ev.id === prev);
+          return stillExists ? prev : cloudEvents[0].id;
+        });
+      } else {
+        setSelectedEventId(null);
+      }
+    });
+
+    // 4. Real-time automatic listener subscription to Default Student Roster
+    const unsubscribeRoster = subscribeToDefaultRoster((cloudRoster) => {
+      if (!active) return;
+      localStorage.setItem("default_student_roster", JSON.stringify(cloudRoster));
+    });
+
+    return () => {
+      active = false;
+      unsubscribeEvents();
+      unsubscribeRoster();
+    };
   }, []);
 
   // Save utility to run offline or online
@@ -487,11 +554,6 @@ export default function App() {
                   onUpdateStudent={handleUpdateStudent}
                 />
               )}
-
-              <BackupManager 
-                onSyncComplete={handleLoadData} 
-                isCloudConnected={isCloudConnected} 
-              />
             </div>
 
             {/* Content Area Column */}

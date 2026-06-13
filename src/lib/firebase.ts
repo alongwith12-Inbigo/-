@@ -9,7 +9,8 @@ import {
   getDocs, 
   setDoc, 
   deleteDoc, 
-  getDocFromServer 
+  getDocFromServer,
+  onSnapshot
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Event } from '../types';
@@ -43,16 +44,17 @@ if (isFirebaseConfigured) {
   try {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     
-    // Attempt robust persistent local caching. If fail (e.g. blocked in sandboxed iframe), fall back to default
+    // Attempt robust persistent local caching with custom databaseId.
+    // If fail (e.g. blocked in sandboxed iframe), fall back to default
     try {
       db = initializeFirestore(app, {
         localCache: persistentLocalCache({
           tabManager: persistentMultipleTabManager()
         })
-      });
+      }, firebaseConfig.firestoreDatabaseId);
     } catch (cacheError) {
       console.warn("Firestore persistent cache is not supported in this frame, falling back to default.", cacheError);
-      db = getFirestore(app);
+      db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
     }
   } catch (error) {
     console.warn("Firebase initialization failed. Falling back to Local Storage mode.", error);
@@ -301,4 +303,41 @@ export async function saveDefaultRoster(students: RosterStudent[]): Promise<bool
     console.warn("Failed to save roster to cloud:", error);
     return false;
   }
+}
+
+// Real-time Firestore sync subscriptions
+export function subscribeToEvents(callback: (events: Event[]) => void): () => void {
+  if (!db) {
+    return () => {};
+  }
+  const eventsCol = collection(db, 'events');
+  return onSnapshot(eventsCol, (snapshot) => {
+    const cloudEvents: Event[] = [];
+    snapshot.forEach((docSnap) => {
+      cloudEvents.push(docSnap.data() as Event);
+    });
+    cloudEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    saveLocalEvents(cloudEvents);
+    callback(cloudEvents);
+  }, (error) => {
+    console.warn("Firestore events sub error:", error);
+  });
+}
+
+export function subscribeToDefaultRoster(callback: (roster: RosterStudent[]) => void): () => void {
+  if (!db) {
+    return () => {};
+  }
+  const docRef = doc(db, 'rosters', 'default');
+  return onSnapshot(docRef, (docSnap) => {
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      if (data && Array.isArray(data.students)) {
+        localStorage.setItem("default_student_roster", JSON.stringify(data.students));
+        callback(data.students);
+      }
+    }
+  }, (error) => {
+    console.warn("Firestore roster sub error:", error);
+  });
 }
