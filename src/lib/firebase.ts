@@ -388,9 +388,51 @@ export function subscribeToEvents(callback: (events: Event[]) => void): () => vo
       cloudEvents.push(data);
     });
 
-    cloudEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    saveLocalEvents(cloudEvents);
-    callback(cloudEvents);
+    let deletedIds: string[] = [];
+    try {
+      const d = localStorage.getItem("deleted_event_ids");
+      if (d) deletedIds = JSON.parse(d);
+    } catch (e) {}
+    const deletedSet = new Set(deletedIds);
+
+    const local = getLocalEvents();
+    const mergedEventsMap = new Map<string, Event>();
+
+    // Seed map with cloud events
+    cloudEvents.forEach((ev) => {
+      mergedEventsMap.set(ev.id, ev);
+    });
+
+    // Reconcile with local events using updatedAt timestamps
+    for (const localEv of local) {
+      if (deletedSet.has(localEv.id)) {
+        continue;
+      }
+      const cloudEv = mergedEventsMap.get(localEv.id);
+      if (!cloudEv) {
+        // Not present in cloud - upload in background
+        saveEventToCloudOnly(localEv).catch((err) => {
+          console.warn("Failed background auto-reconcile local event to cloud:", err);
+        });
+        mergedEventsMap.set(localEv.id, localEv);
+      } else {
+        // Exists in both: compare updatedAt
+        const localTime = localEv.updatedAt ? new Date(localEv.updatedAt).getTime() : 0;
+        const cloudTime = cloudEv.updatedAt ? new Date(cloudEv.updatedAt).getTime() : 0;
+        if (localTime > cloudTime) {
+          // Local is newer: use local and upload in background
+          saveEventToCloudOnly(localEv).catch((err) => {
+            console.warn("Failed to update cloud with newer local event:", err);
+          });
+          mergedEventsMap.set(localEv.id, localEv);
+        }
+      }
+    }
+
+    const mergedEvents = Array.from(mergedEventsMap.values());
+    mergedEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    saveLocalEvents(mergedEvents);
+    callback(mergedEvents);
   }, (error) => {
     console.warn("Firestore events sub error:", error);
   });
@@ -408,11 +450,36 @@ export function subscribeToDefaultRoster(callback: (roster: RosterStudent[]) => 
     if (docSnap.exists()) {
       const data = docSnap.data();
       if (data && Array.isArray(data.students)) {
-        localStorage.setItem("default_student_roster", JSON.stringify(data.students));
-        if (data.updatedAt) {
-          localStorage.setItem("default_student_roster_metadata", JSON.stringify({ updatedAt: data.updatedAt }));
+        let localUpdatedAt: string | null = null;
+        try {
+          const lMeta = localStorage.getItem("default_student_roster_metadata");
+          if (lMeta) {
+            const parsed = JSON.parse(lMeta);
+            if (parsed && parsed.updatedAt) localUpdatedAt = parsed.updatedAt;
+          }
+        } catch (e) {}
+
+        const localTime = localUpdatedAt ? new Date(localUpdatedAt).getTime() : 0;
+        const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+
+        if (localTime > cloudTime) {
+          // Local roster is newer! Keep local and upload to cloud in background
+          setDoc(docRef, {
+            id: "default",
+            students: localRoster,
+            updatedAt: localUpdatedAt
+          }).catch((err) => {
+            console.warn("Failed to overwrite cloud roster with newer local roster:", err);
+          });
+          callback(localRoster);
+        } else {
+          // Cloud is newer or equal, apply cloud roster
+          localStorage.setItem("default_student_roster", JSON.stringify(data.students));
+          if (data.updatedAt) {
+            localStorage.setItem("default_student_roster_metadata", JSON.stringify({ updatedAt: data.updatedAt }));
+          }
+          callback(data.students);
         }
-        callback(data.students);
       }
     } else {
       // If the cloud document doesn't exist yet, push the current local roster up to keep it online
