@@ -318,13 +318,26 @@ export async function loadDefaultRoster(): Promise<{ roster: RosterStudent[]; is
         const localTime = localUpdatedAt ? new Date(localUpdatedAt).getTime() : 0;
         const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
 
-        if (localTime > cloudTime) {
+        let useLocal = false;
+        if (localRoster.length > 0 && data.students.length === 0) {
+          useLocal = true; // Local has data, cloud is empty: preserve local and upload
+        } else if (localRoster.length > 0 && data.students.length > 0) {
+          if (localTime > cloudTime) {
+            useLocal = true;
+          } else if (localTime === cloudTime && localRoster.length > data.students.length) {
+            useLocal = true;
+          }
+        }
+
+        if (useLocal) {
           const sanitizedRoster = JSON.parse(JSON.stringify(localRoster));
+          const updatedTime = localUpdatedAt || new Date().toISOString();
           await setDoc(docRef, {
             id: "default",
             students: sanitizedRoster,
-            updatedAt: localUpdatedAt || new Date().toISOString()
+            updatedAt: updatedTime
           });
+          localStorage.setItem("default_student_roster_metadata", JSON.stringify({ updatedAt: updatedTime }));
           return { roster: localRoster, isCloudConnected: true };
         } else {
           localStorage.setItem("default_student_roster", JSON.stringify(data.students));
@@ -474,16 +487,29 @@ export function subscribeToDefaultRoster(callback: (roster: RosterStudent[]) => 
         const localTime = localUpdatedAt ? new Date(localUpdatedAt).getTime() : 0;
         const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
 
-        if (localTime > cloudTime) {
+        let useLocal = false;
+        if (localRoster.length > 0 && data.students.length === 0) {
+          useLocal = true; // Local has data, cloud is empty: preserve local and upload
+        } else if (localRoster.length > 0 && data.students.length > 0) {
+          if (localTime > cloudTime) {
+            useLocal = true;
+          } else if (localTime === cloudTime && localRoster.length > data.students.length) {
+            useLocal = true;
+          }
+        }
+
+        if (useLocal) {
           // Local roster is newer! Keep local and upload to cloud in background
           const sanitizedRoster = JSON.parse(JSON.stringify(localRoster));
+          const updatedTime = localUpdatedAt || new Date().toISOString();
           setDoc(docRef, {
             id: "default",
             students: sanitizedRoster,
-            updatedAt: localUpdatedAt || new Date().toISOString()
+            updatedAt: updatedTime
           }).catch((err) => {
             console.warn("Failed to overwrite cloud roster with newer local roster:", err);
           });
+          localStorage.setItem("default_student_roster_metadata", JSON.stringify({ updatedAt: updatedTime }));
           callback(localRoster);
         } else {
           // Cloud is newer or equal, apply cloud roster
