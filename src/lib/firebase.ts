@@ -44,11 +44,18 @@ if (isFirebaseConfigured) {
   try {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     
-    // We use safe getFirestore initializer which leverages standard SDK cache fallback
-    // and completely bypasses the persistentMultipleTabManager locking bugs in sandboxed iframes.
-    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    // We initialize Firestore with ignoreUndefinedProperties set to true to safely ignore 
+    // any optional or temporarily undefined React state fields when writing documents.
+    db = initializeFirestore(app, {
+      ignoreUndefinedProperties: true
+    }, firebaseConfig.firestoreDatabaseId);
   } catch (error) {
-    console.warn("Firebase initialization failed. Falling back to Local Storage mode.", error);
+    console.warn("Firebase initializeFirestore failed. Falling back to standard getFirestore.", error);
+    try {
+      db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    } catch (fallbackError) {
+      console.warn("Double fallback failed. Falling back to Local Storage mode.", fallbackError);
+    }
   }
 }
 
@@ -185,7 +192,9 @@ async function saveEventToCloudOnly(event: Event) {
   if (!db) return;
   const path = `events/${event.id}`;
   try {
-    await setDoc(doc(db, 'events', event.id), event);
+    // Sanitize the object to thoroughly remove any hidden undefined fields
+    const sanitizedEvent = JSON.parse(JSON.stringify(event));
+    await setDoc(doc(db, 'events', event.id), sanitizedEvent);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -310,10 +319,11 @@ export async function loadDefaultRoster(): Promise<{ roster: RosterStudent[]; is
         const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
 
         if (localTime > cloudTime) {
+          const sanitizedRoster = JSON.parse(JSON.stringify(localRoster));
           await setDoc(docRef, {
             id: "default",
-            students: localRoster,
-            updatedAt: localUpdatedAt
+            students: sanitizedRoster,
+            updatedAt: localUpdatedAt || new Date().toISOString()
           });
           return { roster: localRoster, isCloudConnected: true };
         } else {
@@ -327,9 +337,10 @@ export async function loadDefaultRoster(): Promise<{ roster: RosterStudent[]; is
     } else {
       if (localRoster.length > 0) {
         const now = new Date().toISOString();
+        const sanitizedRoster = JSON.parse(JSON.stringify(localRoster));
         await setDoc(docRef, {
           id: "default",
-          students: localRoster,
+          students: sanitizedRoster,
           updatedAt: now
         });
         localStorage.setItem("default_student_roster_metadata", JSON.stringify({ updatedAt: now }));
@@ -355,6 +366,7 @@ export async function saveDefaultRoster(students: RosterStudent[]): Promise<bool
     }
 
     const docRef = doc(db, 'rosters', 'default');
+    const sanitizedStudents = JSON.parse(JSON.stringify(students));
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("Firestore save timeout")), 15000);
     });
@@ -362,7 +374,7 @@ export async function saveDefaultRoster(students: RosterStudent[]): Promise<bool
     await Promise.race([
       setDoc(docRef, {
         id: "default",
-        students: students,
+        students: sanitizedStudents,
         updatedAt: now
       }),
       timeoutPromise
@@ -464,10 +476,11 @@ export function subscribeToDefaultRoster(callback: (roster: RosterStudent[]) => 
 
         if (localTime > cloudTime) {
           // Local roster is newer! Keep local and upload to cloud in background
+          const sanitizedRoster = JSON.parse(JSON.stringify(localRoster));
           setDoc(docRef, {
             id: "default",
-            students: localRoster,
-            updatedAt: localUpdatedAt
+            students: sanitizedRoster,
+            updatedAt: localUpdatedAt || new Date().toISOString()
           }).catch((err) => {
             console.warn("Failed to overwrite cloud roster with newer local roster:", err);
           });
@@ -486,9 +499,10 @@ export function subscribeToDefaultRoster(callback: (roster: RosterStudent[]) => 
       if (localRoster.length > 0) {
         const now = new Date().toISOString();
         localStorage.setItem("default_student_roster_metadata", JSON.stringify({ updatedAt: now }));
+        const sanitizedRoster = JSON.parse(JSON.stringify(localRoster));
         setDoc(docRef, {
           id: "default",
-          students: localRoster,
+          students: sanitizedRoster,
           updatedAt: now
         }).catch((err) => {
           console.warn("Failed to auto-upload default roster:", err);
