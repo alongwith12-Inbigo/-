@@ -26,4 +26,5 @@ export interface Event {
   description?: string;
   students: AttendanceRecord[];
   createdAt: string;     // ISO String
+  updatedAt?: string;    // ISO String for cloud/local sync reconciliation
 }

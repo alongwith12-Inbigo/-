@@ -17,7 +17,8 @@ service cloud.firestore {
         && data.title.size() <= 200
         && data.date is string
         && data.students is list
-        && data.createdAt is string;
+        && data.createdAt is string
+        && (!('updatedAt' in data) || data.updatedAt is string);
     }
 
     function isValidRoster(data) {

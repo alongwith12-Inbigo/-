@@ -130,12 +130,16 @@ export default function App() {
 
   // Save utility to run offline or online
   const persistEvent = async (updatedEvent: Event) => {
+    const eventWithTimestamp: Event = {
+      ...updatedEvent,
+      updatedAt: new Date().toISOString()
+    };
     // Optimistically update React local state statefully and instantly
-    setEvents((prev) => prev.map((ev) => (ev.id === updatedEvent.id ? updatedEvent : ev)));
+    setEvents((prev) => prev.map((ev) => (ev.id === eventWithTimestamp.id ? eventWithTimestamp : ev)));
     
     // Background cloud save so there is 0ms click latency
     try {
-      const success = await firebaseSaveEvent(updatedEvent);
+      const success = await firebaseSaveEvent(eventWithTimestamp);
       if (success) {
         setIsCloudConnected(true);
       } else {
@@ -162,12 +166,14 @@ export default function App() {
       }));
     }
 
+    const nowStr = new Date().toISOString();
     const newEvent: Event = {
       id: `ev_${Date.now()}`,
       title,
       date,
       students: initialStudents,
-      createdAt: new Date().toISOString()
+      createdAt: nowStr,
+      updatedAt: nowStr
     };
 
     // Optimistically update React local state instantly
