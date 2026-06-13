@@ -28,11 +28,17 @@ service cloud.firestore {
     }
 
     match /events/{eventId} {
-      allow read, write: if isValidId(eventId) && (request.resource == null || isValidEvent(request.resource.data));
+      // Split get and list to prevent query-incompatible wildcard matches on list operations
+      allow get: if isValidId(eventId);
+      allow list: if true;
+      allow write: if isValidId(eventId) && (request.resource == null || isValidEvent(request.resource.data));
     }
 
     match /rosters/{rosterId} {
-      allow read, write: if isValidId(rosterId) && (request.resource == null || isValidRoster(request.resource.data));
+      // Split get and list to maintain consistent and query-safe access patterns
+      allow get: if isValidId(rosterId);
+      allow list: if true;
+      allow write: if isValidId(rosterId) && (request.resource == null || isValidRoster(request.resource.data));
     }
   }
 }
