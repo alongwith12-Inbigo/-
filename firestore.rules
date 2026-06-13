@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions for validating document fields
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEvent(data) {
+      return data.id is string 
+        && data.title is string 
+        && data.title.size() <= 200
+        && data.date is string
+        && data.students is list
+        && data.createdAt is string;
+    }
+
+    match /events/{eventId} {
+      allow read, write: if isValidId(eventId) && (request.resource == null || isValidEvent(request.resource.data));
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "Event": {
+      "title": "Event",
+      "description": "야외 행사 및 학습",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "행사 고유 ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "행사명"
+        },
+        "date": {
+          "type": "string",
+          "description": "행사 일자 (YYYY-MM-DD)"
+        },
+        "students": {
+          "type": "array",
+          "description": "행사에 참여하는 학생들의 출석 기록 목록"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "생성 일시"
+        }
+      },
+      "required": ["id", "title", "date", "students", "createdAt"]
+    }
+  },
+  "firestore": {
+    "events/{eventId}": {
+      "schema": "Event",
+      "description": "행사별 출석부 정보 및 학생 명단"
+    }
+  }
+}
