@@ -20,8 +20,18 @@ service cloud.firestore {
         && data.createdAt is string;
     }
 
+    function isValidRoster(data) {
+      return data.id is string
+        && data.students is list
+        && data.updatedAt is string;
+    }
+
     match /events/{eventId} {
       allow read, write: if isValidId(eventId) && (request.resource == null || isValidEvent(request.resource.data));
+    }
+
+    match /rosters/{rosterId} {
+      allow read, write: if isValidId(rosterId) && (request.resource == null || isValidRoster(request.resource.data));
     }
   }
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Trash2, Upload, Users, AlertCircle, Check, X, Pencil } from "lucide-react";
+import { Plus, Trash2, Upload, Users, AlertCircle, Check, X, Pencil, CloudLightning } from "lucide-react";
 import { Student } from "../types";
+import { loadDefaultRoster as apiLoadDefaultRoster, saveDefaultRoster as apiSaveDefaultRoster } from "../lib/firebase";
 
 interface StudentManagerProps {
   onAddStudents: (students: Student[]) => void;
@@ -45,14 +46,15 @@ export default function StudentManager({
 
   // Load saved default roster on mount
   useEffect(() => {
-    const saved = localStorage.getItem("default_student_roster");
-    if (saved) {
+    const fetchDefaultRoster = async () => {
       try {
-        setDefaultSavedRoster(JSON.parse(saved));
+        const { roster } = await apiLoadDefaultRoster();
+        setDefaultSavedRoster(roster);
       } catch (e) {
-        console.error("Failed to load default student roster", e);
+        console.error("Failed to load default roster from firebase", e);
       }
-    }
+    };
+    fetchDefaultRoster();
   }, []);
 
   const handleSingleAdd = (e: React.FormEvent) => {
@@ -107,12 +109,16 @@ export default function StudentManager({
     }
   };
 
-  const saveAsDefault = () => {
+  const saveAsDefault = async () => {
     if (currentRoster.length === 0) return;
-    localStorage.setItem("default_student_roster", JSON.stringify(currentRoster));
-    setDefaultSavedRoster(currentRoster);
-    setShowSavedFeedback(true);
-    setTimeout(() => setShowSavedFeedback(false), 2000);
+    try {
+      await apiSaveDefaultRoster(currentRoster);
+      setDefaultSavedRoster(currentRoster);
+      setShowSavedFeedback(true);
+      setTimeout(() => setShowSavedFeedback(false), 2500);
+    } catch (e) {
+      console.error("Failed to save default roster:", e);
+    }
   };
 
   const loadDefaultRoster = () => {

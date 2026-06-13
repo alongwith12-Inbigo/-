@@ -27,12 +27,36 @@
         }
       },
       "required": ["id", "title", "date", "students", "createdAt"]
+    },
+    "Roster": {
+      "title": "Roster",
+      "description": "기본 학생 등록 명단",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "명단 고유 ID (예: default)"
+        },
+        "students": {
+          "type": "array",
+          "description": "학생 정보 목록"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "최종 수정 일시"
+        }
+      },
+      "required": ["id", "students", "updatedAt"]
     }
   },
   "firestore": {
     "events/{eventId}": {
       "schema": "Event",
       "description": "행사별 출석부 정보 및 학생 명단"
+    },
+    "rosters/{rosterId}": {
+      "schema": "Roster",
+      "description": "시스템 전체에 등록된 기본 학생 명단"
     }
   }
 }

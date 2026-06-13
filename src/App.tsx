@@ -10,6 +10,7 @@ import EventSelector from "./components/EventSelector";
 import StudentManager from "./components/StudentManager";
 import StatsDashboard from "./components/StatsDashboard";
 import StudentCard from "./components/StudentCard";
+import BackupManager from "./components/BackupManager";
 import { 
   ClipboardList, 
   HelpCircle, 
@@ -486,6 +487,11 @@ export default function App() {
                   onUpdateStudent={handleUpdateStudent}
                 />
               )}
+
+              <BackupManager 
+                onSyncComplete={handleLoadData} 
+                isCloudConnected={isCloudConnected} 
+              />
             </div>
 
             {/* Content Area Column */}

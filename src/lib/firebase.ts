@@ -228,3 +228,77 @@ export async function deleteEvent(id: string): Promise<boolean> {
     return false;
   }
 }
+
+// ----------------------------------------------------
+// Default Roster Sync APIs (No Device Lock, Shared Across All Sessions)
+// ----------------------------------------------------
+import { Student as RosterStudent } from '../types';
+
+export async function loadDefaultRoster(): Promise<{ roster: RosterStudent[]; isCloudConnected: boolean }> {
+  try {
+    const localSaved = localStorage.getItem("default_student_roster");
+    let localRoster: RosterStudent[] = localSaved ? JSON.parse(localSaved) : [];
+
+    if (!db) {
+      return { roster: localRoster, isCloudConnected: false };
+    }
+
+    const docRef = doc(db, 'rosters', 'default');
+    
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Firestore connection timeout")), 2000);
+    });
+    
+    const docSnap: any = await Promise.race([getDocFromServer(docRef), timeoutPromise]);
+    
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      if (data && Array.isArray(data.students)) {
+        localStorage.setItem("default_student_roster", JSON.stringify(data.students));
+        return { roster: data.students, isCloudConnected: true };
+      }
+    } else {
+      if (localRoster.length > 0) {
+        await setDoc(docRef, {
+          id: "default",
+          students: localRoster,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
+    return { roster: localRoster, isCloudConnected: true };
+  } catch (error) {
+    console.warn("Failed to load default roster from cloud, using local:", error);
+    const localSaved = localStorage.getItem("default_student_roster");
+    let localRoster: RosterStudent[] = localSaved ? JSON.parse(localSaved) : [];
+    return { roster: localRoster, isCloudConnected: false };
+  }
+}
+
+export async function saveDefaultRoster(students: RosterStudent[]): Promise<boolean> {
+  try {
+    localStorage.setItem("default_student_roster", JSON.stringify(students));
+
+    if (!db) {
+      return false;
+    }
+
+    const docRef = doc(db, 'rosters', 'default');
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Firestore save timeout")), 2000);
+    });
+
+    await Promise.race([
+      setDoc(docRef, {
+        id: "default",
+        students: students,
+        updatedAt: new Date().toISOString()
+      }),
+      timeoutPromise
+    ]);
+    return true;
+  } catch (error) {
+    console.warn("Failed to save roster to cloud:", error);
+    return false;
+  }
+}
